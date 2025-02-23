@@ -4,3 +4,4 @@ openai
 python-dotenv
 tiktoken
 slack-bolt
+bs4
