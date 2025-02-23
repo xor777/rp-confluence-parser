@@ -1,0 +1,6 @@
+python-telegram-bot
+chromadb
+openai
+python-dotenv
+tiktoken
+slack-bolt
