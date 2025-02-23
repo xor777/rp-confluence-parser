@@ -9,11 +9,23 @@ from bs4 import BeautifulSoup
 import json
 import shutil
 import time
+import logging
+from datetime import datetime
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 load_dotenv()
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('parser.log', encoding='utf-8'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
 
 def clean_html_content(html_content):
     soup = BeautifulSoup(html_content, 'html.parser')
@@ -74,7 +86,7 @@ def get_page_structure(session, confluence_url, page_id):
     )
     
     if response.status_code != 200:
-        print(f"Ошибка при получении структуры страницы {page_id}: {response.status_code}")
+        logger.error(f"Ошибка при получении структуры страницы {page_id}: {response.status_code}")
         return None
     
     data = response.json()
@@ -118,14 +130,14 @@ def get_page_content(session, confluence_url, page_id, space_info):
     page_response = session.get(page_url)
     
     if page_response.status_code != 200:
-        print(f"Ошибка при получении страницы {page_id}: {page_response.status_code}")
+        logger.error(f"Ошибка при получении страницы {page_id}: {page_response.status_code}")
         return None
     
     soup = BeautifulSoup(page_response.text, 'html.parser')
     main_content = soup.find('div', class_='wiki-content')
     
     if not main_content:
-        print(f"Не найден основной контент на странице {page_id}")
+        logger.error(f"Не найден основной контент на странице {page_id}")
         return None
     
     title_elem = soup.find('title')
@@ -148,7 +160,7 @@ def get_page_content(session, confluence_url, page_id, space_info):
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 def add_to_collection(collection, content, metadata, doc_id):
     if not content or len(content.strip()) == 0:
-        print(f"Пропуск пустой страницы: {metadata['title']}")
+        logger.warning(f"Пропуск пустой страницы: {metadata['title']}")
         return
         
     try:
@@ -169,10 +181,10 @@ def add_to_collection(collection, content, metadata, doc_id):
             metadatas=[processed_metadata],
             ids=[doc_id]
         )
-        print(f"Сохранена страница: {metadata['title']}")
+        logger.info(f"Сохранена страница: {metadata['title']}")
         
     except Exception as e:
-        print(f"Ошибка при сохранении страницы {metadata['title']}: {str(e)}")
+        logger.error(f"Ошибка при сохранении страницы {metadata['title']}: {str(e)}")
         if "APIStatusError" in str(e):
             return
         raise
@@ -214,12 +226,14 @@ def get_child_pages(session, confluence_url, page_id, space_info, chroma_collect
             time.sleep(0.5)
             
     except Exception as e:
-        print(f"Ошибка при обработке страницы {page_id}: {str(e)}")
+        logger.error(f"Ошибка при обработке страницы {page_id}: {str(e)}")
 
 def get_confluence_pages():
+    logger.info("Начало парсинга Confluence")
+    
     if os.path.exists("./chroma_db"):
         shutil.rmtree("./chroma_db")
-        print("Удалена старая база ChromaDB")
+        logger.info("Удалена старая база ChromaDB")
     
     openai_ef = embedding_functions.OpenAIEmbeddingFunction(
         api_key=os.getenv('OPENAI_API_KEY'),
@@ -231,7 +245,7 @@ def get_confluence_pages():
         name="confluence_eh",
         embedding_function=openai_ef
     )
-    print("Создана новая коллекция в ChromaDB")
+    logger.info("Создана новая коллекция в ChromaDB")
     
     basic_auth = HTTPBasicAuth(
         os.getenv('BASIC_AUTH_USERNAME'),
@@ -246,7 +260,7 @@ def get_confluence_pages():
     
     try:
         login_response = session.get(f"{confluence_url}/login.action")
-        print(f"Статус входа: {login_response.status_code}")
+        logger.info(f"Статус входа: {login_response.status_code}")
         
         login_data = {
             'os_username': os.getenv('CONFLUENCE_USERNAME'),
@@ -261,7 +275,7 @@ def get_confluence_pages():
         )
         
         if login_result.status_code == 200:
-            print("Успешный вход в систему")
+            logger.info("Успешный вход в систему")
             
             spaces_response = session.get(
                 f"{confluence_url}/rest/api/space",
@@ -271,12 +285,12 @@ def get_confluence_pages():
             
             if spaces_response.status_code == 200:
                 spaces = spaces_response.json()['results']
-                print(f"\nНайдено пространств: {len(spaces)}")
+                logger.info(f"\nНайдено пространств: {len(spaces)}")
                 
                 for space in spaces:
                     homepage = space.get('homepage', {})
                     if homepage:
-                        print(f"\nОбработка пространства: {space['name']} ({space['key']})")
+                        logger.info(f"\nОбработка пространства: {space['name']} ({space['key']})")
                         
                         space_info = {
                             'key': space['key'],
@@ -286,16 +300,29 @@ def get_confluence_pages():
                         
                         get_child_pages(session, confluence_url, homepage['id'], space_info, collection)
                         
-                        print(f"Завершено пространство: {space['key']}")
+                        logger.info(f"Завершено пространство: {space['key']}")
                 
-                print("\nПарсинг всех пространств завершен")
+                logger.info("\nПарсинг всех пространств завершен")
             else:
-                print(f"Ошибка при получении списка пространств: {spaces_response.status_code}")
+                logger.error(f"Ошибка при получении списка пространств: {spaces_response.status_code}")
         else:
-            print("Ошибка входа в систему")
+            logger.error("Ошибка входа в систему")
             
     except Exception as e:
-        print(f"Произошла ошибка: {str(e)}")
+        logger.error(f"Произошла ошибка: {str(e)}")
+        logger.exception("Детали ошибки:")
 
 if __name__ == "__main__":
-    get_confluence_pages() 
+    start_time = datetime.now()
+    logger.info(f"Начало выполнения скрипта: {start_time}")
+    
+    try:
+        get_confluence_pages()
+    except Exception as e:
+        logger.error("Критическая ошибка при выполнении скрипта")
+        logger.exception(str(e))
+    finally:
+        end_time = datetime.now()
+        duration = end_time - start_time
+        logger.info(f"Завершение выполнения скрипта: {end_time}")
+        logger.info(f"Общее время выполнения: {duration}") 

@@ -6,10 +6,14 @@ from dotenv import load_dotenv
 from knowledge_base import KnowledgeBase, Constants
 from datetime import datetime
 
+# Configure logging
 logging.basicConfig(
-    format='%(asctime)s - %(levelname)s - %(message)s',
     level=logging.INFO,
-    datefmt='%H:%M:%S'
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('slack_bot.log', encoding='utf-8'),
+        logging.StreamHandler()
+    ]
 )
 logger = logging.getLogger(__name__)
 logging.getLogger("slack_bolt").setLevel(logging.WARNING)
@@ -18,20 +22,26 @@ load_dotenv()
 
 class SlackBot:
     def __init__(self):
+        logger.info("=== Инициализация Slack бота ===")
+        logger.info(f"Время запуска: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        
         self.bot_token = os.getenv('SLACK_BOT_TOKEN')
         if not self.bot_token:
+            logger.error("SLACK_BOT_TOKEN не найден в переменных окружения")
             raise ValueError("SLACK_BOT_TOKEN не найден в переменных окружения")
             
         self.app_token = os.getenv('SLACK_APP_TOKEN')
         if not self.app_token:
+            logger.error("SLACK_APP_TOKEN не найден в переменных окружения")
             raise ValueError("SLACK_APP_TOKEN не найден в переменных окружения")
             
         self.app = App(token=self.bot_token)
         self.kb = KnowledgeBase()
         
-        logger.info("инициализация Slack бота...")
+        logger.info("Инициализация базы знаний завершена")
         self.setup_handlers()
-        logger.info("обработчики успешно настроены")
+        logger.info("Обработчики событий настроены")
+        logger.info("=== Инициализация завершена ===\n")
     
     def setup_handlers(self):
         @self.app.event("app_mention")
@@ -156,12 +166,20 @@ class SlackBot:
             raise
 
 def main():
+    start_time = datetime.now()
+    logger.info(f"Начало работы бота: {start_time}")
+    
     try:
         bot = SlackBot()
         bot.run()
     except Exception as e:
-        logger.error(f"ошибка при запуске бота: {str(e)}")
-        raise
+        logger.error("Критическая ошибка при работе бота")
+        logger.exception(str(e))
+    finally:
+        end_time = datetime.now()
+        duration = end_time - start_time
+        logger.info(f"Завершение работы бота: {end_time}")
+        logger.info(f"Общее время работы: {duration}")
 
 if __name__ == "__main__":
     main() 
